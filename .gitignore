@@ -1,2 +1,4 @@
 .DS_Store
 .creds
+__pycache__/*
+*.pyc
