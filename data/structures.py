@@ -38,16 +38,17 @@ class Stream(Object):
         return self.stream_name
 
 
-class Posts(Object):
+class Post(Object):
     """
     Represents a DB representation of a single post.
     """
 
-    def __init__(self, post_id, post_title, post_text):
+    def __init__(self, post_id, post_name, post_text, create_date):
         super().__init__()
         self.post_id = post_id
-        self.post_name = post_title
+        self.post_name = post_name
         self.post_text = post_text
+        self.create_date = create_date
     
     def get_id(self):
         return self.post_id

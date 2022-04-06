@@ -1,9 +1,13 @@
 import cmd
 import time
 import uuid
+import readline
 
 from data import db_operations as db
-from data.structures import NodeType, Stream, Node
+from data.structures import NodeType, Stream, Node, Post
+
+readline.parse_and_bind('tab: complete')
+readline.parse_and_bind('set editing-mode vi')
 
 def parse_args(args: str):
     return [x.strip() for x in args.split(' ')]
@@ -30,6 +34,15 @@ class CLIState:
         db.boot_stream(stream=stream, upstream_id=self.tree_root.object.get_id())
         self.tree_root.add_child(Node(NodeType.STREAM, stream, self.tree_root))
 
+    def boot_post(self, args):
+        post_id = str(uuid.uuid4())
+        post_name = args[0]
+        post_text = input()
+
+        post = Post(post_id=post_id, post_name=post_name, post_text=post_text, create_date=int(time.time()))
+        db.boot_post(post, self.tree_root.object.get_id())
+
+        self.tree_root.add_child(Node(NodeType.POST, post, self.tree_root))
     
     def show(self, args):
         """
@@ -47,10 +60,15 @@ class CLIState:
         for stream in streams:
             stream = stream.object
             print ('stream', i, ':\t', stream.stream_id[:5], ':\t', stream.stream_name)
+        
+        i = 0
+        for post in posts:
+            post = post.object
+            print ('post', i, ':\t', post.post_id[:5], '\t:', post.post_name)
 
-    def enter(self, args):
+    def enter_stream(self, args):
         """
-        Enter into a stream or post.
+        Enter into a stream.
         """
         obj = args[0]
         child_map = { child.object.get_name() : child for child in self.tree_root.children }
@@ -59,9 +77,18 @@ class CLIState:
             print ('Cannot enter')
         else:
             self.tree_root = child_map[obj]
+    
+    def enter_post(self, args):
+        """
+        Enter into a post
+        """
+        obj = args[0]
+        child_map = { child.object.get_name() : child for child in self.tree_root.children }
 
-
-cli_state = CLIState()
+        if obj not in child_map:
+            print ('Cannot enter')
+        else:
+            print (db.get_post(child_map[obj].object.get_id()).post_text)
 
 
 class StreamyCLI(cmd.Cmd):
@@ -69,20 +96,28 @@ class StreamyCLI(cmd.Cmd):
     prompt = '$ '
     file = None
 
+    def preloop(self) -> None:
+        self.cli_state = CLIState()
+
     def do_boot(self, args:str):
         args = parse_args(args)
 
         bootable_object = args[0]
         if bootable_object == 'stream':
-            cli_state.boot_stream(args[1:])
+            self.cli_state.boot_stream(args[1:])
+        if bootable_object == 'post':
+            self.cli_state.boot_post(args[:1])
 
     def do_show(self, args:str):
         args = parse_args(args)
-        cli_state.show(args)
+        self.cli_state.show(args)
     
     def do_enter(self, args:str):
         args = parse_args(args)
-        cli_state.enter(args)
+        if args[0] == 'stream':
+            self.cli_state.enter_stream(args[1:])
+        if args[0] == 'post':
+            self.cli_state.enter_post(args[1:])
 
 
 if __name__ == '__main__':
