@@ -1,140 +1,108 @@
 import cmd
 import sys
-import time
-import uuid
-import readline
-import editor
 
-from data import db_operations as db
-from termcolor import colored
-from data.structures import NodeType, Stream, Node, Post
-
-readline.parse_and_bind('tab: complete')
-readline.parse_and_bind('set editing-mode vi')
+from state.cli_state import CLIState
+from util.term_util import color
+from util.term_util import TermPrinter as prn
 
 def parse_args(args: str):
     return [x.strip() for x in args.split(' ')]
 
 
-def join_string(*args):
-    return ' '.join([str(x) for x in args])
+def autocomplete_list(raw_list, phrase):
+    if phrase == '':
+        return raw_list
+
+    return [item for item in raw_list if item.startswith(phrase)]
 
 
-class CLIState:
-    def __init__(self):
-        db.ensure_root()
-        self.tree_root = db.get_streams_tree()
+def extract_phrase(cmd_line):
+    line = cmd_line.split(' ')
+    loc = len(line) - 1
 
-    def boot_stream(self, args):
-        stream_id = str(uuid.uuid4())
-        stream_name = args[0]
-        create_date = int(time.time())
-
-        stream = Stream(stream_id=stream_id,
-            stream_name=stream_name,
-            upstream=[],
-            downstream=[],
-            posts=[],
-            create_date=create_date,
-            is_archived=False)
-
-        db.boot_stream(stream=stream, upstream_id=self.tree_root.object.get_id())
-        self.tree_root.add_child(Node(NodeType.STREAM, stream, self.tree_root))
-
-    def boot_post(self, args):
-        post_id = str(uuid.uuid4())
-        post_name = args[0]
-        post_text = editor.edit(contents=b'').decode()
-
-        post = Post(post_id=post_id, post_name=post_name, post_text=post_text, create_date=int(time.time()))
-        db.boot_post(post, self.tree_root.object.get_id())
-
-        self.tree_root.add_child(Node(NodeType.POST, post, self.tree_root))
-    
-    def show(self, args):
-        """
-        Show information about the current location.
-        """
-        obj = self.tree_root.object
-
-        print (colored(f'Stream: "{obj.stream_name}"', 'magenta'))
-        children = self.tree_root.children
-
-        streams = [x for x in children if x.type == NodeType.STREAM]
-        posts = [x for x in children if x.type == NodeType.POST]
-
-        i = 0
-        for stream in streams:
-            i += 1
-            stream = stream.object
-            msg = join_string('stream', i, f': [{stream.stream_id[:5]}]', stream.stream_name)
-            print (colored(msg, 'yellow'))
-        
-        print ('')
-        i = 0
-        for post in posts:
-            i += 1
-            post = post.object
-            msg = join_string('post  ', i, f': [{post.post_id[:5]}]', post.post_name)
-            print (colored(msg, 'green'))
-
-    def enter_stream(self, args):
-        """
-        Enter into a stream.
-        """
-        obj = args[0]
-        child_map = { child.object.get_name() : child for child in self.tree_root.children }
-        
-        if obj not in child_map:
-            print (colored('Cannot enter', 'red'))
-        else:
-            self.tree_root = child_map[obj]
-    
-    def enter_post(self, args):
-        """
-        Enter into a post
-        """
-        obj = args[0]
-        child_map = { child.object.get_name() : child for child in self.tree_root.children }
-
-        if obj not in child_map:
-            print (colored('Cannot enter', 'red'))
-        else:
-            post = db.get_post(child_map[obj].object.get_id())
-            post_text = editor.edit(contents=post.post_text.encode('utf-8')).decode()
-            post.post_text = post_text
-
-            db.put_post(post)
+    return line[loc]
 
 
 class StreamyCLI(cmd.Cmd):
-    intro = colored('\nWelcome to Streamy!!', 'cyan', attrs=['bold'])
-    prompt = colored('$ ', 'cyan', attrs=['bold'])
+    intro = color('\nWelcome to Streamy!!', 'cyan', attrs=['bold'])
+    prompt = color('$ ', 'cyan', attrs=['bold'])
     file = None
 
     def preloop(self) -> None:
         self.cli_state = CLIState()
-
-    def do_boot(self, args:str):
+    
+    def do_ls(self, args:str):
         args = parse_args(args)
+        self.cli_state.show(args)
+    
+    def do_stream(self, args:str):
+        args = parse_args(args)
+        stream_name = args[0]
 
+        if self.cli_state.stream_exists(stream_name):
+            self.cli_state.enter_stream(args[1:])
+        else:
+            self.cli_state.boot_stream(args[1:])
+
+    def complete_stream(self, text, line, beg_idx, end_idx):
+        child_streams = self.cli_state.child_streams()
+        phrase = extract_phrase(line)
+
+        return autocomplete_list([x.object.get_name() for x in child_streams], phrase)
+
+    def do_post(self, args:str):
+        args = parse_args(args)
+        post_name = args[0]
+
+        print(post_name, self.cli_state.post_exists(post_name))
+        if self.cli_state.post_exists(post_name):
+            self.cli_state.enter_post(args)
+        else:
+            self.cli_state.boot_post(args)
+
+    def complete_post(self, text, line, beg_idx, end_idx):
+        child_posts = self.cli_state.child_posts()
+        phrase = extract_phrase(line)
+
+        return autocomplete_list([x.object.get_name() for x in child_posts], phrase)
+    
+    def do_cd(self, args:str):
+        args = parse_args(args)
+        enterable_name = args[0]
+
+        if enterable_name == '..':
+            self.cli_state.enter_back()
+        elif self.cli_state.stream_exists(enterable_name):
+            self.cli_state.enter_stream(args)
+        else:
+            prn.red('Cannot enter !!')
+    
+    def complete_cd(self, text, line, beg_idx, end_idx):
+        child_posts = [x.object.get_name() for x in self.cli_state.child_posts()]
+        child_streams = [x.object.get_name() for x in self.cli_state.child_streams()]
+
+        phrase = extract_phrase(line)
+        return autocomplete_list(child_streams + child_posts, phrase)
+
+    def do_mk(self, args:str):
+        args = parse_args(args)
         bootable_object = args[0]
+
         if bootable_object == 'stream':
             self.cli_state.boot_stream(args[1:])
         if bootable_object == 'post':
             self.cli_state.boot_post(args[1:])
 
-    def do_show(self, args:str):
-        args = parse_args(args)
-        self.cli_state.show(args)
-    
-    def do_enter(self, args:str):
-        args = parse_args(args)
-        if args[0] == 'stream':
-            self.cli_state.enter_stream(args[1:])
-        if args[0] == 'post':
-            self.cli_state.enter_post(args[1:])
-    
+    def complete_mk(self, text, line, beg_idx, end_idx):
+        line = line.split(' ')
+        loc = len(line) - 1
+
+        current_phrase = line[loc]
+        if loc == 1:
+            return autocomplete_list(['post', 'stream'], current_phrase)
+
+        return []
+
     def do_exit(self, args:str):
         sys.exit(0)
 
